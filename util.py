@@ -1,8 +1,42 @@
 import os
 import sentencepiece
 import collections
-import torch
-from torch.serialization import default_restore_location
+import re
+
+class Patterns:
+    SELF_BREAK_TOKEN = r'<selfbr>'
+    SELF_BREAK_RGX = re.compile(SELF_BREAK_TOKEN)
+
+    GET_SUBMISSION_SELF_TEXT_RGX = re.compile(
+      r'(?<=%s).*$' % SELF_BREAK_TOKEN, re.DOTALL)
+
+    BOT_BODY_RGX = re.compile(
+      r"""^i am a bot|^i\'m a bot|^bleep.*?bloop|^beep.*?boop|i am a bot[^a-zA-Z]*$
+      |^i\'m a bot[^a-zA-Z]*$|bleep.*?bloop[^a-zA-Z]*$|beep.*?boop[^a-zA-Z]*$'""",
+      re.I)
+    BOT_BUTTON_RGX = re.compile(r'\^\|\s*\^\[')
+    BOT_AUTHOR_PATTERNS = [
+      r'^imgur',
+      r'^linkfixer',
+      r'bots?[^a-zA-Z]*$',
+      r'tips?$',
+      r'quotes$',
+      r'transcriber$',
+      r'watch$',
+      r'breaker$',
+      r'fixer$',
+    ]
+    BOT_AUTHOR_RGX = re.compile('|'.join(BOT_AUTHOR_PATTERNS), re.I)
+
+    # Markdown tables: https://www.markdownguide.org/extended-syntax/#tables
+    DETECT_MARKDOWN_TABLE_RGX = re.compile(r'(\|\s*:?--*:?\s*\|)|(\+----*)')
+    ALPHANUM_RGX = re.compile(r'[a-zA-Z0-9]')
+    ANY_UPPERCASE_RGX = re.compile(r'[A-Z]')
+
+    BZ2_EXT_RGX = re.compile(r'\.(bz2|bzip2)(\-luigi\-tmp\-\d*)?$')
+    XZ_EXT_RGX = re.compile(r'\.xz(\-luigi\-tmp\-\d*)?$')
+    GZ_EXT_RGX = re.compile(r'\.(gz|gzip)(\-luigi\-tmp\-\d*)?$')
+    TXT_TSV_EXT_RGX = re.compile(r'\.(txt|tsv)(\-luigi\-tmp\-\d*)?$')
 
 def load_vocab(vocab_file):
     """Loads a vocabulary file into a dictionary."""
@@ -18,57 +52,6 @@ def load_vocab(vocab_file):
             index += 1
     print("we totally load " + str(len(vocab)) + " tokens")
     return vocab
-
-
-def read_all_files(data_dir):
-    all_files = []
-    if os.path.isfile(data_dir):
-        all_files.append(data_dir)
-    else:
-        for root, dirs, files in os.walk(data_dir):
-            for cur_file in files:
-                all_files.append(os.path.join(root, cur_file))
-    return all_files
-
-
-def read_all_data(data_dir):
-    all_data = []
-    all_files = read_all_files(data_dir)
-    for cur_file in all_files:
-        with open(cur_file, "r", encoding="utf-8", errors='ignore') as f_read:
-            all_data.extend(f_read.readlines())
-    return all_data
-
-
-def load_model_for_inference(model, prompt_model_path):
-    loaded_prompt_model = torch.load(prompt_model_path, map_location=lambda s, l: default_restore_location(s, 'cpu'))
-    if "state_dict" in loaded_prompt_model:
-        loaded_prompt_model = loaded_prompt_model["state_dict"]
-    prompt_state_dict = {}
-    for (key, value) in loaded_prompt_model.items():
-        if key.startswith('model.prompt_embed_tokens.'):
-            key = key[26:]
-        prompt_state_dict[key] = value
-    missing_keys, extra_keys = model.prompt_embed_tokens.load_state_dict(prompt_state_dict, strict=False)
-    print("prompt_missing_keys")
-    print(missing_keys)
-    print("prompt_extra_keys")
-    print(extra_keys)
-    return model
-
-
-def _truncate_seq(tokens, max_length, fixlen=False):
-    while True:
-        if len(tokens) <= max_length:
-            break
-        tokens.pop()
-    if fixlen:
-        while True:
-            if len(tokens) >= max_length:
-                break
-            tokens.append("[PAD]")
-    return tokens
-
 
 class SPETokenizer(object):
     """Runs end-to-end tokenization: punctuation splitting + wordpiece"""
